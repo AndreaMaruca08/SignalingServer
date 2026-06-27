@@ -76,7 +76,6 @@ func (r *Room) handle(p *Peer, roomID string, s *Server) {
 	r.peers = append(r.peers, p)
 	count := len(r.peers)
 
-	// Secondo peer: scarica il buffer
 	var toFlush [][]byte
 	if count == 2 {
 		toFlush = r.buffer
@@ -142,7 +141,6 @@ func (r *Room) handle(p *Peer, roomID string, s *Server) {
 func main() {
 	s := newServer()
 
-	// /signal?room=default  — room opzionale, default se non specificata
 	http.HandleFunc("/signal", func(w http.ResponseWriter, r *http.Request) {
 		roomID := r.URL.Query().Get("room")
 		if roomID == "" {
@@ -181,7 +179,6 @@ func main() {
 		}
 		json.NewEncoder(w).Encode(result)
 	})
-
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, err := w.Write([]byte("Online"))
@@ -194,5 +191,6 @@ func main() {
 	log.Println("  ws://localhost:8080/signal         (room default)")
 	log.Println("  ws://localhost:8080/signal?room=X  (room nominata)")
 	log.Println("  http://localhost:8080/status        (stato rooms)")
+	log.Println("  http://localhost:8080/health        (controllo online)")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
