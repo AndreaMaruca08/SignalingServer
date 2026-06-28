@@ -85,8 +85,14 @@ func (r *Room) handle(p *Peer, roomID string, s *Server) {
 
 	log.Printf("[%s] %s connesso (%d/2)", roomID, p.id, count)
 
+	// 🔴 IMPORTANTE: Invia il buffer E CHIUDI LA CONNESSIONE VELOCEMENTE
+	// Altrimenti i messaggi si perdono nel timing
 	for _, msg := range toFlush {
-		p.conn.WriteMessage(websocket.TextMessage, msg)
+		if err := p.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			log.Printf("[%s] errore invio buffer a %s: %v", roomID, p.id, err)
+			p.conn.Close()
+			return
+		}
 	}
 
 	defer func() {
@@ -126,8 +132,12 @@ func (r *Room) handle(p *Peer, roomID string, s *Server) {
 		sent := false
 		for _, peer := range r.peers {
 			if peer != p {
-				peer.conn.WriteMessage(websocket.TextMessage, msg)
-				sent = true
+				// 🟢 Non mandare in erro se uno non riceve, ma log l'errore
+				if err := peer.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+					log.Printf("[%s] errore invio a %s: %v", roomID, peer.id, err)
+				} else {
+					sent = true
+				}
 			}
 		}
 		if !sent {
