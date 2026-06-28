@@ -19,8 +19,8 @@ type Peer struct {
 	conn        *websocket.Conn
 	id          string
 	connectedAt time.Time
+	isOfferer   bool // 🆕 AGGIUNTO
 }
-
 type Room struct {
 	mu     sync.Mutex
 	peers  []*Peer
@@ -77,6 +77,9 @@ func (r *Room) handle(p *Peer, roomID string, s *Server) {
 	r.peers = append(r.peers, p)
 	count := len(r.peers)
 
+	// 🆕 Il primo peer fa l'offer, il secondo l'answer
+	p.isOfferer = (count == 1)
+
 	var toFlush [][]byte
 	if count == 2 {
 		toFlush = r.buffer
@@ -85,9 +88,23 @@ func (r *Room) handle(p *Peer, roomID string, s *Server) {
 	}
 	r.mu.Unlock()
 
-	log.Printf("[%s] %s connesso (%d/2)", roomID, p.id, count)
+	roleStr := map[bool]string{true: "OFFERER", false: "ANSWERER"}[p.isOfferer]
+	log.Printf("[%s] %s connesso (%d/2) - %s", roomID, p.id, count, roleStr)
 
-	// 🔴 Flush del buffer con log e error checking
+	// 🆕 Invia il ruolo assegnato al peer
+	roleMsg := map[string]interface{}{
+		"type": "role",
+		"role": map[bool]string{true: "offer", false: "answer"}[p.isOfferer],
+	}
+	data, _ := json.Marshal(roleMsg)
+	if err := p.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		log.Printf("[%s] ❌ Errore invio ruolo a %s: %v", roomID, p.id, err)
+		p.conn.Close()
+		return
+	}
+	log.Printf("[%s] 📤 Ruolo inviato a %s: %s", roomID, p.id, roleStr)
+
+	// Flush del buffer con log e error checking
 	if len(toFlush) > 0 {
 		log.Printf("[%s] 📤 Flushing %d messaggi a %s", roomID, len(toFlush), p.id)
 		time.Sleep(100 * time.Millisecond)
