@@ -25,6 +25,7 @@ type Room struct {
 	mu     sync.Mutex
 	peers  []*Peer
 	buffer [][]byte
+	ready  bool
 }
 
 type Server struct {
@@ -80,19 +81,25 @@ func (r *Room) handle(p *Peer, roomID string, s *Server) {
 	if count == 2 {
 		toFlush = r.buffer
 		r.buffer = nil
+		r.ready = true
 	}
 	r.mu.Unlock()
 
 	log.Printf("[%s] %s connesso (%d/2)", roomID, p.id, count)
 
-	// 🔴 IMPORTANTE: Invia il buffer E CHIUDI LA CONNESSIONE VELOCEMENTE
-	// Altrimenti i messaggi si perdono nel timing
-	for _, msg := range toFlush {
-		if err := p.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-			log.Printf("[%s] errore invio buffer a %s: %v", roomID, p.id, err)
-			p.conn.Close()
-			return
+	// 🔴 Flush del buffer con log e error checking
+	if len(toFlush) > 0 {
+		log.Printf("[%s] 📤 Flushing %d messaggi a %s", roomID, len(toFlush), p.id)
+		time.Sleep(100 * time.Millisecond)
+		for i, msg := range toFlush {
+			if err := p.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+				log.Printf("[%s] ❌ Errore flush msg %d a %s: %v", roomID, i, p.id, err)
+				p.conn.Close()
+				return
+			}
+			log.Printf("[%s] ✅ Flushed msg %d a %s", roomID, i, p.id)
 		}
+		log.Printf("[%s] ✅ Flush completato per %s", roomID, p.id)
 	}
 
 	defer func() {
@@ -104,6 +111,9 @@ func (r *Room) handle(p *Peer, roomID string, s *Server) {
 			}
 		}
 		remaining := len(r.peers)
+		if remaining < 2 {
+			r.ready = false
+		}
 		r.mu.Unlock()
 
 		duration := time.Since(p.connectedAt).Round(time.Second)
@@ -132,17 +142,17 @@ func (r *Room) handle(p *Peer, roomID string, s *Server) {
 		sent := false
 		for _, peer := range r.peers {
 			if peer != p {
-				// 🟢 Non mandare in erro se uno non riceve, ma log l'errore
 				if err := peer.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-					log.Printf("[%s] errore invio a %s: %v", roomID, peer.id, err)
+					log.Printf("[%s] ❌ Errore invio a %s: %v", roomID, peer.id, err)
 				} else {
 					sent = true
 				}
 			}
 		}
-		if !sent {
+		// Bufferizza SOLO se la room non è pronta (< 2 peer)
+		if !sent && !r.ready {
 			r.buffer = append(r.buffer, msg)
-			log.Printf("[%s] messaggio bufferizzato (%d in coda)", roomID, len(r.buffer))
+			log.Printf("[%s] 📦 messaggio bufferizzato (%d in coda)", roomID, len(r.buffer))
 		}
 		r.mu.Unlock()
 	}
@@ -189,6 +199,7 @@ func main() {
 		}
 		json.NewEncoder(w).Encode(result)
 	})
+
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, err := w.Write([]byte("Online"))
